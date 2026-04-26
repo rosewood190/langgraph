@@ -1,0 +1,122 @@
+Metadata-Version: 2.4
+Name: algo-agent-mvp
+Version: 0.1.0
+Summary: LangGraph-based multi-agent MVP for algorithm problem solving
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: langgraph>=0.2.34
+Requires-Dist: langchain>=0.3.0
+Requires-Dist: langchain-openai>=0.2.0
+Requires-Dist: pydantic>=2.8.0
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: prompt-toolkit>=3.0.47
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+
+# Algo Agent MVP
+
+一个基于 LangGraph 的多智能体算法题求解与聊天 CLI MVP。
+
+## 功能
+- 算法题意分析
+- 分阶段算法回答
+- 算法策略规划
+- 伪代码生成
+- C++ 代码生成
+- 轻量审核与一次回退
+- 普通聊天与问候应答
+- 基于本地 txt 的短期上下文记忆
+- 基于本地 json 的阶段会话状态
+- CLI 思考中进度提示
+
+## 目录
+- `app/state.py`：共享状态与结构化模型
+- `app/graph.py`：LangGraph 工作流构建
+- `app/router.py`：验证后路由逻辑
+- `app/agents/`：算法工作流节点实现
+- `app/prompts/`：算法与聊天提示词
+- `app/services/llm.py`：LLM 统一封装
+- `app/services/chat.py`：用户输入分类与普通对话回复
+- `app/services/memory.py`：本地 txt 上下文记忆
+- `app/services/session.py`：本地 json 阶段会话状态
+- `app/services/progress.py`：CLI 进度提示
+- `app/main.py`：CLI 入口
+
+## 安装
+```bash
+pip install -e .
+pip install -e .[dev]
+```
+
+## 配置
+复制 `.env.example` 为 `.env`，填入你的 `OPENAI_API_KEY`。默认已配置为阿里云 DashScope 的 OpenAI 兼容地址，并使用 `qwen-plus` 作为默认模型。
+
+## 运行
+交互模式：
+```bash
+python -m app.main
+```
+
+启动后会先打招呼，然后持续等待用户输入；输入 `exit` 结束对话。
+
+支持两类输入：
+- 算法类问题：进入多智能体算法工作流
+- 普通聊天类问题：进入自然对话回复
+
+CLI 在处理期间会显示简易思考进度提示，避免用户误以为没有响应。
+
+单次提问模式：
+```bash
+python -m app.main "给定 n 个物品，每个物品有重量和价值，背包容量为 W，求最大总价值，每个物品最多选一次。"
+```
+
+## 分阶段算法回答
+当用户输入算法题时，系统会先给出：
+- 问题分析
+
+然后询问用户是否需要继续获取：
+- 算法策略
+- 伪代码
+- C++ 可执行代码
+
+如果用户输入以下内容之一，则继续：
+- `继续`
+- `可以`
+- `行`
+- `要`
+- `好的`
+- `继续讲`
+- `需要`
+- `yes`
+
+如果用户输入以下内容之一，则停止在当前阶段：
+- `不用`
+- `不需要`
+- `不要`
+- `停止`
+- `no`
+
+## 记忆与会话状态
+程序会保存两类本地状态：
+
+1. 对话记忆文本：
+- `app/memory/conversation_memory.txt`
+
+用于保存最近若干轮 `User/Assistant` 对话，供普通聊天和问题理解使用。
+
+2. 分阶段会话状态：
+- `app/memory/session_state.json`
+
+用于记录当前是否存在一条待继续的算法题流程，例如系统刚给出分析、正在等待用户决定是否继续要策略和代码。
+
+## 流程
+算法问题流程：
+`analyst -> planner -> pseudocode -> coder -> verifier -> formatter`
+
+当 verifier 失败时，会根据 `rollback_target` 回退到 `planner` 或 `coder`，最多重试一次。
+
+普通聊天流程：
+`用户输入分类 -> casual 回复`
+
+分阶段控制流程：
+`算法题输入 -> 先返回问题分析 -> 等待用户确认 -> 若继续则返回策略/伪代码/代码`

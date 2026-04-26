@@ -1,0 +1,23 @@
+[project]
+name = "algo-agent-mvp"
+version = "0.1.0"
+description = "LangGraph-based multi-agent MVP for algorithm problem solving"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "langgraph>=0.2.34",
+  "langchain>=0.3.0",
+  "langchain-openai>=0.2.0",
+  "pydantic>=2.8.0",
+  "python-dotenv>=1.0.1",
+  "prompt-toolkit>=3.0.47",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

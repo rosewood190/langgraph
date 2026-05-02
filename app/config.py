@@ -20,6 +20,12 @@ class Settings:
     )
     temperature: float = float(os.getenv("MODEL_TEMPERATURE", "0"))
     max_retry: int = int(os.getenv("MAX_RETRY", "1"))
+    langsmith_tracing: bool = os.getenv("LANGSMITH_TRACING", "false").strip().lower() in {"1", "true", "yes", "on"}
+    langsmith_api_key: str = os.getenv("LANGSMITH_API_KEY", "")
+    langsmith_endpoint: str = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+    langsmith_project: str = os.getenv("LANGSMITH_PROJECT", "algo-agent-mvp")
+    code_runner_base_url: str = os.getenv("CODE_RUNNER_BASE_URL", "https://wandbox.org/api/compile.json")
+    code_runner_timeout: float = float(os.getenv("CODE_RUNNER_TIMEOUT", "20"))
 
 
 settings = Settings()

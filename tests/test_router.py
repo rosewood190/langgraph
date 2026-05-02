@@ -1,50 +1,99 @@
-from app.router import route_after_manager, route_after_pending_control, route_after_verifier
-from app.state import GraphState, ManagerDecision, VerificationResult
+from __future__ import annotations
+
+from app.router import route_after_orchestrator, route_after_verifier
+from app.state import GraphState
 
 
-def test_route_after_manager_to_chat() -> None:
-    state = GraphState(raw_question="你好", manager_decision=ManagerDecision(decision="casual", target_agent="chat"))
-    assert route_after_manager(state) == "chat"
+def _make_state(**kwargs) -> GraphState:
+    defaults: GraphState = {
+        "messages": [],
+        "problem_text": "demo problem",
+        "analysis": None,
+        "strategy": None,
+        "pseudocode": None,
+        "code_result": None,
+        "verification": None,
+        "orchestrator_route": "analyst",
+        "retry_count": 0,
+        "max_retry": 1,
+        "mode": "teaching",
+        "teaching_stage": "analysis",
+        "awaiting_user_feedback": False,
+        "last_teaching_node": "analyst",
+        "response_mode": "analysis_only",
+        "response_text": "",
+    }
+    defaults.update(kwargs)
+    return defaults
 
 
-def test_route_after_manager_to_pending_control() -> None:
-    state = GraphState(raw_question="继续", manager_decision=ManagerDecision(decision="continue_algorithm", target_agent="pending_algorithm"))
-    assert route_after_manager(state) == "pending_control"
+def test_route_after_orchestrator_chat() -> None:
+    state = _make_state(orchestrator_route="chat")
+    assert route_after_orchestrator(state) == "chat"
 
 
-def test_route_after_manager_to_algorithm_followup() -> None:
-    state = GraphState(raw_question="刚刚那道题还有别的方法吗", manager_decision=ManagerDecision(decision="algorithm_followup", target_agent="algorithm_followup"))
-    assert route_after_manager(state) == "algorithm_followup"
+def test_route_after_orchestrator_analyst() -> None:
+    state = _make_state(orchestrator_route="analyst")
+    assert route_after_orchestrator(state) == "analyst"
 
 
-def test_route_after_manager_to_analyst() -> None:
-    state = GraphState(raw_question="01背包", manager_decision=ManagerDecision(decision="new_algorithm", target_agent="algorithm_graph"))
-    assert route_after_manager(state) == "analyst"
+def test_route_after_orchestrator_followup() -> None:
+    state = _make_state(orchestrator_route="followup")
+    assert route_after_orchestrator(state) == "followup"
 
 
-def test_route_after_pending_control_to_chat() -> None:
-    state = GraphState(raw_question="继续", response_mode="stop")
-    assert route_after_pending_control(state) == "chat"
+def test_route_after_orchestrator_planner() -> None:
+    state = _make_state(orchestrator_route="planner")
+    assert route_after_orchestrator(state) == "planner"
 
 
-def test_route_after_pending_control_to_analyst() -> None:
-    state = GraphState(raw_question="继续", response_mode="full_solution")
-    assert route_after_pending_control(state) == "analyst"
+def test_route_after_orchestrator_pseudocode() -> None:
+    state = _make_state(orchestrator_route="pseudocode")
+    assert route_after_orchestrator(state) == "pseudocode"
+
+
+def test_route_after_orchestrator_coder() -> None:
+    state = _make_state(orchestrator_route="coder")
+    assert route_after_orchestrator(state) == "coder"
+
+
+def test_route_after_orchestrator_default_when_unknown() -> None:
+    state = _make_state(orchestrator_route="unknown_value")
+    assert route_after_orchestrator(state) == "analyst"
 
 
 def test_route_after_verifier_passed() -> None:
-    state = GraphState(raw_question="test")
-    state.verification = VerificationResult(passed=True)
+    state = _make_state(verification={"passed": True, "issues": [], "rollback_target": "", "improvement_suggestions": []})
+    assert route_after_verifier(state) == "formatter"
+
+
+def test_route_after_verifier_no_verification() -> None:
+    state = _make_state(verification=None)
     assert route_after_verifier(state) == "formatter"
 
 
 def test_route_after_verifier_retry_to_coder() -> None:
-    state = GraphState(raw_question="test", retry_count=0, max_retry=1)
-    state.verification = VerificationResult(passed=False, rollback_target="coder")
+    state = _make_state(
+        verification={"passed": False, "issues": [], "rollback_target": "coder", "improvement_suggestions": []},
+        retry_count=1,
+        max_retry=1,
+    )
     assert route_after_verifier(state) == "coder"
 
 
-def test_route_after_verifier_stop_when_exceeded() -> None:
-    state = GraphState(raw_question="test", retry_count=2, max_retry=1)
-    state.verification = VerificationResult(passed=False, rollback_target="planner")
+def test_route_after_verifier_retry_to_planner() -> None:
+    state = _make_state(
+        verification={"passed": False, "issues": [], "rollback_target": "planner", "improvement_suggestions": []},
+        retry_count=1,
+        max_retry=1,
+    )
+    assert route_after_verifier(state) == "planner"
+
+
+def test_route_after_verifier_exceeds_max_retry() -> None:
+    state = _make_state(
+        verification={"passed": False, "issues": [], "rollback_target": "coder", "improvement_suggestions": []},
+        retry_count=3,
+        max_retry=1,
+    )
     assert route_after_verifier(state) == "formatter"

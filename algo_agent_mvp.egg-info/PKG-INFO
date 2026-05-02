@@ -10,113 +10,266 @@ Requires-Dist: langchain-openai>=0.2.0
 Requires-Dist: pydantic>=2.8.0
 Requires-Dist: python-dotenv>=1.0.1
 Requires-Dist: prompt-toolkit>=3.0.47
+Requires-Dist: requests>=2.32.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.3.0; extra == "dev"
 
 # Algo Agent MVP
 
-一个基于 LangGraph 的多智能体算法题求解与聊天 CLI MVP。
+一个基于 LangGraph 的多智能体算法题求解与聊天 CLI MVP。它会像算法老师一样分阶段处理题目：先拆题，再讲策略，最后展开伪代码和代码实现；同时也支持普通聊天、追问解释、请求直接看代码或切换代码语言。
 
 ## 功能
-- 算法题意分析
-- 分阶段算法回答
-- 算法策略规划
+
+- 基于 LangGraph 的多节点工作流编排
+- orchestrator 统一识别新题、继续、停止、重讲、追问、要代码、完整题解和普通聊天等用户意图并分发到对应节点
+- 算法题意分析：题意摘要、输入输出、约束、题型和关键观察
+- 算法策略规划：核心思路、选择理由、步骤、复杂度和边界情况
 - 伪代码生成
-- C++ 代码生成
-- 轻量审核与一次回退
+- 多语言代码生成：默认 C++，也可根据用户请求生成 Python、Java、Go、JavaScript、TypeScript、Rust 等
+- code_runner 调用免费的 Wandbox 在线 API 对生成代码进行编译或语法检查，并尝试空输入运行
+- verifier 结合在线编译运行检查结果审核代码与策略，并按需回退到 `planner` 或 `coder`，最多重试 `MAX_RETRY` 次
+- 当在线检查发现编译、语法、运行或超时错误时，verifier 会确定性回退到 coder，并把错误输出作为修复反馈
+- formatter 将结构化结果整理成面向教学的自然语言回复
+- followup 节点结合当前教学阶段回答追问或重讲
 - 普通聊天与问候应答
-- 基于本地 txt 的短期上下文记忆
-- 基于本地 json 的阶段会话状态
+- 交互式 CLI 支持多轮对话和长文本输入
 - CLI 思考中进度提示
+- 可选 LangSmith tracing
+- 支持导出 LangGraph 架构图 PNG 或 Mermaid 源码
 
 ## 目录
-- `app/state.py`：共享状态与结构化模型
-- `app/graph.py`：LangGraph 工作流构建
-- `app/router.py`：验证后路由逻辑
-- `app/agents/`：算法工作流节点实现
-- `app/prompts/`：算法与聊天提示词
-- `app/services/llm.py`：LLM 统一封装
-- `app/services/chat.py`：用户输入分类与普通对话回复
-- `app/services/memory.py`：本地 txt 上下文记忆
-- `app/services/session.py`：本地 json 阶段会话状态
+
+- `app/main.py`：CLI 入口，支持交互模式、单次提问模式和 `--mode` 参数
+- `app/graph.py`：LangGraph 工作流构建与内存 checkpointer 配置
+- `app/router.py`：orchestrator 与 verifier 后的条件路由逻辑
+- `app/state.py`：共享 `GraphState`、结构化输出模型和状态类型定义
+- `app/config.py`：环境变量配置读取
+- `app/agents/`：各工作流节点实现
+  - `orchestrator.py`：基于规则和打分识别新题、继续、停止、重讲、追问、直接要代码、完整题解和普通聊天
+  - `analyst.py`：题意分析
+  - `planner.py`：算法策略规划
+  - `pseudocode.py`：伪代码生成
+  - `coder.py`：代码生成与目标语言识别
+  - `code_runner.py`：调用 Wandbox 在线 API 做编译、语法检查和空输入运行检查
+  - `verifier.py`：结合代码执行结果审核并给出回退建议
+  - `formatter.py`：最终回复组织
+  - `followup.py`：阶段内追问与重讲
+  - `chat_agent.py`：普通聊天
+- `app/prompts/`：各 agent 的系统提示词
+- `app/services/llm.py`：LLM 统一封装、结构化 JSON 解析与修复
+- `app/services/langsmith.py`：LangSmith tracing 配置
 - `app/services/progress.py`：CLI 进度提示
-- `app/main.py`：CLI 入口
+- `tests/`：路由与 LLM 结构化解析相关测试
+- `export_graph_png.py`：导出当前 LangGraph 架构图
+- `agent_graph.png`：已导出的架构图文件
+- `pyproject.toml`：项目元数据与依赖配置
 
 ## 安装
+
+要求 Python 3.11 或更高版本。
+
 ```bash
 pip install -e .
+```
+
+如需运行测试，安装开发依赖：
+
+```bash
 pip install -e .[dev]
 ```
 
 ## 配置
-复制 `.env.example` 为 `.env`，填入你的 `OPENAI_API_KEY`。默认已配置为阿里云 DashScope 的 OpenAI 兼容地址，并使用 `qwen-plus` 作为默认模型。
+
+在项目根目录创建 `.env`，至少填入：
+
+```env
+OPENAI_API_KEY=你的 API Key
+```
+
+默认使用阿里云 DashScope 的 OpenAI 兼容地址和 `qwen-plus` 模型。可选配置如下：
+
+```env
+MODEL_NAME=qwen-plus
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+MODEL_TEMPERATURE=0
+MAX_RETRY=1
+CODE_RUNNER_BASE_URL=https://wandbox.org/api/compile.json
+CODE_RUNNER_TIMEOUT=20
+```
+
+如果使用其他 OpenAI 兼容服务，可相应修改 `OPENAI_BASE_URL` 和 `MODEL_NAME`。
+
+代码检查默认使用免费的 Wandbox 公共在线 API，不需要本地安装 `g++`、`javac`、`node` 等编译器，也不需要 API Key。`CODE_RUNNER_BASE_URL` 可改为兼容的 Wandbox `compile.json` 地址；`CODE_RUNNER_TIMEOUT` 用于控制在线请求和执行超时时间。
+
+如需开启 LangSmith trace，可额外配置：
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=你的 LangSmith Key
+LANGSMITH_PROJECT=algo-agent-mvp
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+开启后：
+
+- 每次 LangGraph 主流程会记录为一个 trace run
+- 每个 agent 的 LLM 调用会带上对应 `run_name`、`tags` 和 `metadata`
+- 可在 LangSmith 控制台按项目查看整条调用链
 
 ## 运行
+
 交互模式：
+
 ```bash
 python -m app.main
 ```
 
 启动后会先打招呼，然后持续等待用户输入；输入 `exit` 结束对话。
 
-支持两类输入：
-- 算法类问题：进入多智能体算法工作流
-- 普通聊天类问题：进入自然对话回复
+CLI 支持长文本输入：
 
-CLI 在处理期间会显示简易思考进度提示，避免用户误以为没有响应。
+- `Enter`：提交当前输入
+- `Esc+Enter`：插入换行
+- 若终端支持，也可使用 `Shift+Enter` 插入换行
 
 单次提问模式：
+
 ```bash
 python -m app.main "给定 n 个物品，每个物品有重量和价值，背包容量为 W，求最大总价值，每个物品最多选一次。"
 ```
 
+指定输出模式：
+
+```bash
+python -m app.main --mode teaching
+python -m app.main --mode contest
+python -m app.main --mode interview
+```
+
+`--mode` 当前可选：
+
+- `teaching`：默认教学模式
+- `contest`：竞赛风格
+- `interview`：面试风格
+
 ## 分阶段算法回答
-当用户输入算法题时，系统会先给出：
-- 问题分析
 
-然后询问用户是否需要继续获取：
-- 算法策略
-- 伪代码
-- C++ 可执行代码
+当用户输入看起来像新的算法题时，系统会先进入 `analyst` 节点，只返回题目分析。随后会等待用户反馈。
 
-如果用户输入以下内容之一，则继续：
+如果用户表示继续，例如：
+
 - `继续`
 - `可以`
-- `行`
-- `要`
 - `好的`
+- `懂了`
+- `明白了`
+- `下一步`
 - `继续讲`
-- `需要`
-- `yes`
+- `好，继续`
+- `继续吧`
 
-如果用户输入以下内容之一，则停止在当前阶段：
-- `不用`
-- `不需要`
-- `不要`
-- `停止`
-- `no`
+系统会从当前阶段进入下一阶段：
 
-## 记忆与会话状态
-程序会保存两类本地状态：
+1. `analysis` 阶段继续后进入 `planner`，返回策略说明
+2. `strategy` 阶段继续后进入 `pseudocode -> coder -> code_runner -> verifier -> formatter`，返回伪代码、代码、复杂度和审核结果
 
-1. 对话记忆文本：
-- `app/memory/conversation_memory.txt`
+如果用户表示没懂或要求重讲，例如：
 
-用于保存最近若干轮 `User/Assistant` 对话，供普通聊天和问题理解使用。
+- `没懂`
+- `不懂`
+- `再讲一遍`
+- `重讲`
+- `换种方式`
+- `举个例子`
+- `详细一点`
+- `没太懂`
 
-2. 分阶段会话状态：
-- `app/memory/session_state.json`
+系统会进入 `followup` 节点，结合当前阶段换一种方式解释。
 
-用于记录当前是否存在一条待继续的算法题流程，例如系统刚给出分析、正在等待用户决定是否继续要策略和代码。
+用户也可以直接请求代码或指定语言，例如：
 
-## 流程
-算法问题流程：
-`analyst -> planner -> pseudocode -> coder -> verifier -> formatter`
+- `直接给代码`
+- `给我 Python 实现`
+- `改成 Java`
+- `用 Go 写一版`
 
-当 verifier 失败时，会根据 `rollback_target` 回退到 `planner` 或 `coder`，最多重试一次。
+系统会进入 `coder -> code_runner -> verifier -> formatter`，并尽量按请求语言输出实现。
 
-普通聊天流程：
-`用户输入分类 -> casual 回复`
+## 工作流
 
-分阶段控制流程：
-`算法题输入 -> 先返回问题分析 -> 等待用户确认 -> 若继续则返回策略/伪代码/代码`
+主流程从 `orchestrator` 开始：
+
+```text
+START -> orchestrator
+```
+
+orchestrator 可路由到：
+
+```text
+chat -> END
+followup -> END
+analyst -> formatter -> END
+planner -> formatter -> END
+pseudocode -> coder -> code_runner -> verifier -> formatter -> END
+coder -> code_runner -> verifier -> formatter -> END
+```
+
+当代码生成完成后，`code_runner` 会调用免费的 Wandbox 在线 API，按目标语言尝试编译或语法检查，并在通过后执行一次空输入运行。检查结果会写入 `code_execution`，再交给 `verifier` 综合判断。
+
+如果 `code_execution` 显示编译失败、语法错误、运行失败或超时，`verifier` 会不依赖模型、直接生成失败审核结果，设置 `rollback_target=coder`，并把在线错误输出写入 `improvement_suggestions`。随后路由会回到 `coder`，coder 会带着已有代码、在线检查结果和 verifier 建议重新生成修复后的完整代码。
+
+verifier 未通过时会根据 `rollback_target` 回退：
+
+```text
+verifier -> planner
+verifier -> coder
+verifier -> formatter
+```
+
+当审核失败且 `retry_count <= max_retry` 时，verifier 会写入审核反馈消息并让流程回退修正；超过最大重试次数后直接进入 formatter 展示当前结果和问题。
+
+## 状态与上下文
+
+当前版本不再使用独立的本地 `services/memory.py` 或 `services/session.py`。多轮上下文由 LangGraph 的 `MemorySaver` checkpointer 和同一 `thread_id` 下的消息状态维护。
+
+关键状态字段包括：
+
+- `problem_text`：当前算法题原文
+- `analysis`：题意分析结构化结果
+- `strategy`：策略规划结构化结果
+- `pseudocode`：伪代码结构化结果
+- `code_result`：代码生成结果
+- `code_execution`：在线编译、语法检查和空输入运行结果
+- `verification`：审核结果
+- `teaching_stage`：当前教学阶段，可能是 `analysis`、`strategy`、`implementation`、`done`
+- `awaiting_user_feedback`：是否正在等待用户继续或追问
+- `response_mode`：当前回复模式，如 `analysis_only`、`strategy_only`、`implementation_only`、`code_only`、`followup`、`chat`
+
+## 测试
+
+安装开发依赖后运行：
+
+```bash
+pytest
+```
+
+当前测试覆盖：
+
+- orchestrator 后路由
+- orchestrator 用户意图识别：新题、继续、停止、重讲、追问、代码请求、完整题解和普通聊天
+- verifier 后路由与回退逻辑
+- verifier 与 coder 在编译/运行错误场景下的自动修复闭环
+- code_runner 对 Wandbox 在线 API 结果的归一化、编译错误识别和不支持语言处理
+- LLM 结构化 JSON 解析
+- markdown 包裹 JSON、前后缀文本、字符串内原始换行等容错场景
+- 结构化输出修复流程
+
+## 导出架构图
+
+运行：
+
+```bash
+python export_graph_png.py
+```
+
+脚本会尝试生成 `agent_graph.png`。如果 PNG 渲染失败，则导出 Mermaid 源码到 `agent_graph.mmd`。

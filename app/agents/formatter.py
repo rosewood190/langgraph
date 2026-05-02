@@ -1,98 +1,160 @@
 from __future__ import annotations
 
-from app.state import FinalAnswer, GraphState
+from langchain_core.messages import AIMessage
+
+from app.agents.trace import append_agent_trace, prepend_agent_trace
+from app.state import GraphState
+
+
+LANGUAGE_FENCE_MAP = {
+    "C++": "cpp",
+    "Python": "python",
+    "Java": "java",
+    "Go": "go",
+    "JavaScript": "javascript",
+    "TypeScript": "typescript",
+    "Rust": "rust",
+}
+
+
+def _join_non_empty(parts: list[str]) -> str:
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 def run_formatter(state: GraphState) -> dict:
-    analysis = state.analysis
-    strategy = state.strategy
-    pseudocode = state.pseudocode
-    code_result = state.code_result
-    verification = state.verification
+    state = {**state, "agent_trace": append_agent_trace(state, "formatter")}
+    analysis = state.get("analysis") or {}
+    strategy = state.get("strategy") or {}
+    pseudocode = state.get("pseudocode") or {}
+    code_result = state.get("code_result") or {}
+    code_execution = state.get("code_execution") or {}
+    verification = state.get("verification") or {}
+    response_mode = state.get("response_mode", "analysis_only")
 
-    analysis_text = ""
-    if analysis:
-        analysis_text = "\n".join(
-            [
-                f"题目摘要：{analysis.summary}",
-                f"输入：{analysis.input_format}",
-                f"输出：{analysis.output_format}",
-                f"题型：{analysis.problem_type}",
-                "关键观察：" + ("；".join(analysis.key_observations) if analysis.key_observations else "无"),
-            ]
-        )
+    language = code_result.get("language", "C++")
+    code_text = code_result.get("cpp_code", "")
+    fence = LANGUAGE_FENCE_MAP.get(language, "text")
 
-    strategy_text = ""
-    complexity_text = ""
-    if strategy:
-        strategy_text = "\n".join(
-            [
-                f"方案：{strategy.strategy_name}",
-                f"核心思想：{strategy.core_idea}",
-                f"选择原因：{strategy.selected_reason}",
-                "主要步骤：" + ("；".join(strategy.steps) if strategy.steps else "无"),
-                "边界情况：" + ("；".join(strategy.edge_cases) if strategy.edge_cases else "无"),
-            ]
+    # code_only 模式：只输出代码和检查结果
+    if response_mode == "code_only":
+        execution_lines: list[str] = []
+        if code_execution:
+            if code_execution.get("compile_passed") and code_execution.get("run_passed"):
+                execution_lines.append("在线检查：代码已通过编译或语法检查，并完成了一次空输入运行。")
+            else:
+                execution_lines.append("在线检查：" + code_execution.get("message", "未通过编译运行检查。"))
+                if code_execution.get("stderr"):
+                    execution_lines.append("错误信息：" + code_execution.get("stderr", ""))
+        execution_text = "\n\n" + "\n\n".join(execution_lines) if execution_lines else ""
+        response_text = (
+            f"```{fence}\n{code_text}\n```"
+            f"{execution_text}"
         )
-        complexity_text = (
-            f"时间复杂度：{strategy.time_complexity}\n"
-            f"空间复杂度：{strategy.space_complexity}"
-        )
+        response_text = prepend_agent_trace(response_text, state)
+        return {
+            "agent_trace": state["agent_trace"],
+            "response_text": response_text,
+            "messages": [AIMessage(content=response_text)],
+            "awaiting_user_feedback": True,
+            "teaching_stage": "implementation",
+            "last_teaching_node": "implementation",
+        }
 
-    pseudocode_text = ""
-    if pseudocode:
-        pseudocode_text = "\n".join(
-            [
-                f"状态定义：{pseudocode.state_definition}",
-                f"初始化：{pseudocode.initialization}",
-                f"状态转移：{pseudocode.transition}",
-                f"遍历顺序：{pseudocode.traversal_order}",
-                "伪代码：",
-                pseudocode.pseudocode,
-                "关键注意点：" + ("；".join(pseudocode.key_points) if pseudocode.key_points else "无"),
-            ]
-        )
+    # analysis_only 模式：只输出题意分析（使用自然语言 explanation）
+    if response_mode == "analysis_only":
+        explanation = analysis.get("explanation", "")
+        
+        # 添加引导语
+        closing = "\n\n如果这一步你已经清楚了，我可以继续讲我会怎么选策略；如果你觉得哪里还不够明白，也可以直接告诉我，我换种方式再讲一遍。"
+        
+        # 如果需要澄清
+        if analysis.get("need_clarification") and analysis.get("clarification_question"):
+            closing = "\n\n不过在继续之前，我还想先确认一下：" + analysis.get("clarification_question", "")
+        
+        response_text = explanation + closing
+        response_text = prepend_agent_trace(response_text, state)
+        return {
+            "agent_trace": state["agent_trace"],
+            "response_text": response_text,
+            "messages": [AIMessage(content=response_text)],
+        }
 
-    verifier_summary_text = ""
-    verifier_note = ""
-    if verification:
-        if verification.passed:
-            verifier_summary_text = "审核结果：通过"
+    # strategy_only 模式：只输出策略规划（使用自然语言 explanation）
+    if response_mode == "strategy_only":
+        explanation = strategy.get("explanation", "")
+        closing = "\n\n如果这个思路你已经接受了，我下一步可以继续把实现过程展开，包括伪代码和代码；如果你想让我比较一下别的做法，也可以直接问我。"
+        
+        response_text = explanation + closing
+        response_text = prepend_agent_trace(response_text, state)
+        return {
+            "agent_trace": state["agent_trace"],
+            "response_text": response_text,
+            "messages": [AIMessage(content=response_text)],
+        }
+
+    # implementation_only / full_solution 模式：输出完整实现
+    parts: list[str] = []
+    
+    # 如果有伪代码讲解（使用自然语言 explanation）
+    if pseudocode and pseudocode.get("explanation"):
+        parts.append(pseudocode.get("explanation", ""))
+        
+        # 伪代码块
+        pseudocode_block = pseudocode.get("pseudocode", "")
+        if pseudocode_block.strip():
+            parts.append("伪代码大概可以写成这样：\n" + pseudocode_block)
+        
+        # 关键点
+        key_points = pseudocode.get("key_points", [])
+        if key_points:
+            parts.append("实现时有几点特别需要注意：" + "；".join(key_points) + "。")
+
+    # 代码
+    if code_text.strip():
+        parts.append(f"对应的 {language} 代码如下：\n```{fence}\n{code_text}\n```")
+
+    # 复杂度
+    time_complexity = strategy.get("time_complexity", "")
+    space_complexity = strategy.get("space_complexity", "")
+    if time_complexity or space_complexity:
+        complexity_lines = []
+        if time_complexity:
+            complexity_lines.append(f"时间复杂度是 {time_complexity}")
+        if space_complexity:
+            complexity_lines.append(f"空间复杂度是 {space_complexity}")
+        parts.append("复杂度方面，" + "，".join(complexity_lines) + "。")
+
+    # 在线检查结果
+    if code_execution:
+        if code_execution.get("compile_passed") and code_execution.get("run_passed"):
+            parts.append("在线检查方面，代码已经通过编译或语法检查，并完成了一次空输入运行。")
         else:
-            issues_text = "；".join(verification.issues) if verification.issues else "当前结果未完全通过审核，请人工复核。"
-            rollback_text = verification.rollback_target or "无"
-            verifier_summary_text = f"审核结果：未完全通过；建议回退节点：{rollback_text}；发现问题：{issues_text}"
-            verifier_note = "\n七、审核提示\n" + "\n".join(verification.issues or ["当前结果未完全通过审核，请人工复核。"])
+            execution_message = code_execution.get("message", "在线编译运行检查未通过。")
+            stderr = code_execution.get("stderr", "")
+            detail = f"错误信息：{stderr}" if stderr else ""
+            parts.append(_join_non_empty([f"在线检查方面，{execution_message}", detail]))
 
-    cpp_code_text = code_result.cpp_code if code_result else ""
+    # 验证结果
+    if verification:
+        if verification.get("passed", False):
+            parts.append("我也顺手帮你检查过一遍了，目前这版实现是通过的。")
+        else:
+            issues = verification.get("issues", [])
+            rollback_target = verification.get("rollback_target", "") or "未指定"
+            parts.append(
+                "不过我检查后发现这版实现还有一些问题："
+                + ("；".join(issues) if issues else "当前结果未完全通过审核，请人工复核。")
+                + f"。如果继续修，我会优先回到 {rollback_target} 这个阶段处理。"
+            )
 
-    full_response = (
-        f"一、问题分析\n{analysis_text}\n\n"
-        f"二、算法策略\n{strategy_text}\n\n"
-        f"三、伪代码\n{pseudocode_text}\n\n"
-        f"四、C++ 实现\n```cpp\n{cpp_code_text}\n```\n\n"
-        f"五、复杂度分析\n{complexity_text}\n\n"
-        f"六、审核摘要\n{verifier_summary_text or '无'}"
-        f"{verifier_note}"
-    )
-
-    final_answer = FinalAnswer(
-        analysis_text=analysis_text,
-        strategy_text=strategy_text,
-        pseudocode_text=pseudocode_text,
-        cpp_code_text=cpp_code_text,
-        complexity_text=complexity_text,
-        verifier_summary_text=verifier_summary_text,
-        full_response=full_response,
-    )
+    # 结束语
+    parts.append("如果你愿意，我接下来可以继续陪你逐行解释代码，或者帮你把它改成 Python、Java 之类的其他语言版本。")
+    
+    response_text = _join_non_empty(parts)
+    response_text = prepend_agent_trace(response_text, state)
 
     return {
-        "final_answer": final_answer,
-        "last_algorithm_question": state.raw_question,
-        "last_analysis_text": analysis_text,
-        "last_strategy_text": strategy_text,
-        "last_pseudocode_text": pseudocode_text,
-        "last_cpp_code_text": cpp_code_text,
-        "last_complexity_text": complexity_text,
-        "current_step": "done",
+        "agent_trace": state["agent_trace"],
+        "response_text": response_text,
+        "messages": [AIMessage(content=response_text)],
     }

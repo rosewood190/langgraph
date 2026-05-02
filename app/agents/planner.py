@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+from app.agents.trace import append_agent_trace
 from app.prompts.planner import PLANNER_PROMPT
 from app.services.llm import get_llm_service
 from app.state import GraphState, StrategyPlan
@@ -7,9 +10,13 @@ from app.state import GraphState, StrategyPlan
 
 def run_planner(state: GraphState) -> dict:
     llm = get_llm_service()
+    analysis = state.get("analysis")
+    problem_text = state.get("problem_text", "")
+    response_mode = state.get("response_mode", "strategy_only")
+    
     user_payload = (
-        f"题目原文：\n{state.raw_question}\n\n"
-        f"题意分析：\n{state.analysis.model_dump_json(indent=2, ensure_ascii=False) if state.analysis else '{}'}"
+        f"题目原文：\n{problem_text}\n\n"
+        f"题意分析：\n{json.dumps(analysis, ensure_ascii=False, indent=2) if analysis else '{}'}"
     )
     strategy = llm.invoke_structured(
         PLANNER_PROMPT,
@@ -18,6 +25,10 @@ def run_planner(state: GraphState) -> dict:
         agent_name="planner",
     )
     return {
-        "strategy": strategy,
-        "current_step": "planner_completed",
+        "agent_trace": append_agent_trace(state, "planner"),
+        "strategy": strategy.model_dump(),
+        "teaching_stage": "strategy",
+        "awaiting_user_feedback": response_mode == "strategy_only",
+        "last_teaching_node": "planner",
+        "response_mode": response_mode,
     }

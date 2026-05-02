@@ -3,38 +3,27 @@ from __future__ import annotations
 from app.state import GraphState
 
 
-def route_after_manager(state: GraphState) -> str:
-    decision = state.manager_decision.decision if state.manager_decision else "new_algorithm"
-
-    if decision == "continue_algorithm":
-        return "pending_control"
-    if decision == "algorithm_followup":
-        return "algorithm_followup"
-    if decision in {"stop_algorithm", "casual"}:
-        return "chat"
-    return "analyst"
-
-
-def route_after_pending_control(state: GraphState) -> str:
-    if state.response_mode == "stop":
-        return "chat"
+def route_after_orchestrator(state: GraphState) -> str:
+    route = state.get("orchestrator_route", "analyst")
+    if route in {"chat", "followup", "analyst", "planner", "pseudocode", "coder"}:
+        return route
     return "analyst"
 
 
 def route_after_verifier(state: GraphState) -> str:
-    if not state.verification:
+    verification = state.get("verification")
+    if verification is None:
         return "formatter"
 
-    if state.verification.passed:
+    if verification.get("passed", False):
         return "formatter"
 
-    if state.retry_count > state.max_retry:
+    retry_count = state.get("retry_count", 0)
+    max_retry = state.get("max_retry", 1)
+    if retry_count > max_retry:
         return "formatter"
 
-    target = state.verification.rollback_target.strip().lower()
+    target = (verification.get("rollback_target", "") or "coder").strip().lower()
     if target == "planner":
         return "planner"
-    if target == "coder":
-        return "coder"
-
-    return "formatter"
+    return "coder"

@@ -8,6 +8,7 @@ from typing import Any, Type
 from pydantic import BaseModel
 
 from app.config import settings
+from app.services.langsmith import build_langsmith_config, tracing_enabled
 
 try:
     from langchain_openai import ChatOpenAI
@@ -38,6 +39,9 @@ class LLMService:
             raise ValueError(
                 "未检测到 OPENAI_API_KEY。请确认项目根目录 .env 文件中已正确填写密钥。"
             )
+
+        if settings.langsmith_tracing:
+            tracing_enabled()
 
         self.llm = ChatOpenAI(
             model=settings.model_name,
@@ -84,16 +88,95 @@ class LLMService:
 
         return stripped[start:]
 
+    def _escape_raw_control_chars_in_strings(self, content: str) -> str:
+        result: list[str] = []
+        in_string = False
+        escape = False
+
+        for char in content:
+            if in_string:
+                if escape:
+                    result.append(char)
+                    escape = False
+                    continue
+
+                if char == "\\":
+                    result.append(char)
+                    escape = True
+                    continue
+
+                if char == '"':
+                    result.append(char)
+                    in_string = False
+                    continue
+
+                if char == "\n":
+                    result.append("\\n")
+                    continue
+
+                if char == "\r":
+                    result.append("\\r")
+                    continue
+
+                if char == "\t":
+                    result.append("\\t")
+                    continue
+
+                result.append(char)
+                continue
+
+            result.append(char)
+            if char == '"':
+                in_string = True
+
+        return "".join(result)
+
     def _parse_structured_content(self, content: str, agent_name: str) -> dict[str, Any]:
         candidate = self._extract_json_candidate(content)
         try:
             data = json.loads(candidate)
-        except JSONDecodeError as exc:
-            raise StructuredOutputError(agent_name, content, exc) from exc
+        except JSONDecodeError:
+            repaired_candidate = self._escape_raw_control_chars_in_strings(candidate)
+            try:
+                data = json.loads(repaired_candidate)
+            except JSONDecodeError as exc:
+                raise StructuredOutputError(agent_name, content, exc) from exc
 
         if not isinstance(data, dict):
             raise StructuredOutputError(agent_name, content)
         return data
+
+    def _invoke_chat(self, messages: list[tuple[str, str]], config: dict[str, Any] | None = None) -> str:
+        response = self.llm.invoke(messages, config=config or None)
+        return response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
+
+    def _repair_structured_output(self, raw_content: str, schema: Type[BaseModel], agent_name: str) -> dict[str, Any]:
+        repair_prompt = (
+            "你是一个 JSON 修复器。你的任务不是回答问题，而是把给定内容修复成一个合法的 JSON 对象。"
+            "必须满足以下要求：\n"
+            "1. 只输出单个 JSON 对象，不要输出解释。\n"
+            f"2. 顶层字段应与目标 schema `{schema.__name__}` 对齐。\n"
+            "3. 保留原始语义，不要凭空新增无关内容。\n"
+            "4. 所有字符串中的换行必须转义为 \\n。\n"
+            "5. 如果原内容被截断或不完整，请尽可能修复成最合理、最保守的合法 JSON。"
+        )
+        repair_config = build_langsmith_config(
+            run_name=f"{agent_name}_json_repair",
+            tags=["algo-agent", "json-repair", agent_name],
+            metadata={
+                "agent_name": agent_name,
+                "output_schema": schema.__name__,
+                "model_name": settings.model_name,
+            },
+        )
+        repaired_content = self._invoke_chat(
+            [
+                ("system", repair_prompt),
+                ("human", raw_content),
+            ],
+            config=repair_config,
+        )
+        return self._parse_structured_content(repaired_content, agent_name)
 
     def invoke_structured(
         self,
@@ -106,26 +189,48 @@ class LLMService:
             "请严格输出单个 JSON 对象，不要使用 markdown 代码块，不要输出额外解释。"
             "如果字段值里需要换行，请使用 JSON 字符串转义符 \\n。"
         )
-        response = self.llm.invoke([
-            ("system", system_prompt),
-            ("human", f"{format_prompt}\n\n输入内容如下：\n{user_payload}"),
-        ])
-        content = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
-        data = self._parse_structured_content(content, agent_name)
+        config = build_langsmith_config(
+            run_name=f"{agent_name}_structured",
+            tags=["algo-agent", "structured-output", agent_name],
+            metadata={
+                "agent_name": agent_name,
+                "output_schema": schema.__name__,
+                "model_name": settings.model_name,
+            },
+        )
+        content = self._invoke_chat(
+            [
+                ("system", system_prompt),
+                ("human", f"{format_prompt}\n\n输入内容如下：\n{user_payload}"),
+            ],
+            config=config,
+        )
+        try:
+            data = self._parse_structured_content(content, agent_name)
+        except StructuredOutputError:
+            data = self._repair_structured_output(content, schema, agent_name)
+
         try:
             return schema.model_validate(data)
         except Exception as exc:
             raise StructuredOutputError(agent_name, content, exc) from exc
 
-    def invoke_text(self, system_prompt: str, user_payload: str) -> str:
-        response = self.llm.invoke([
-            ("system", system_prompt),
-            ("human", user_payload),
-        ])
-        content = response.content
-        if isinstance(content, str):
-            return content.strip()
-        return json.dumps(content, ensure_ascii=False)
+    def invoke_text(self, system_prompt: str, user_payload: str, agent_name: str = "text_agent") -> str:
+        config = build_langsmith_config(
+            run_name=f"{agent_name}_text",
+            tags=["algo-agent", "text-output", agent_name],
+            metadata={
+                "agent_name": agent_name,
+                "model_name": settings.model_name,
+            },
+        )
+        return self._invoke_chat(
+            [
+                ("system", system_prompt),
+                ("human", user_payload),
+            ],
+            config=config,
+        ).strip()
 
 
 _llm_service: LLMService | None = None

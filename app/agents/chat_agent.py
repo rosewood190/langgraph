@@ -1,29 +1,36 @@
 from __future__ import annotations
 
-from app.services.chat import reply_casual_message
+from langchain_core.messages import AIMessage, HumanMessage
+
+from app.agents.trace import append_agent_trace, prepend_agent_trace
+from app.prompts.chat import CHAT_PROMPT
+from app.services.llm import get_llm_service
 from app.state import GraphState
 
 
-PENDING_ALGORITHM_CHAT_NOTE = "\n\n如果你之后还想继续刚才那道算法题，直接回复“继续”就可以。"
-STOP_ALGORITHM_REPLY = "好的，那我先停在问题分析这一步。你之后如果想继续要算法策略、伪代码或 C++ 代码，可以直接告诉我继续。"
+def _build_messages_for_chat(state: GraphState) -> list[tuple[str, str]]:
+    messages = state.get("messages", [])
+    result: list[tuple[str, str]] = [("system", CHAT_PROMPT)]
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            result.append(("human", content))
+        elif isinstance(msg, AIMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            result.append(("assistant", content))
+    return result
 
 
 def run_chat(state: GraphState) -> dict:
-    decision = state.manager_decision.decision if state.manager_decision else "casual"
-
-    if decision == "stop_algorithm":
-        return {
-            "response_text": STOP_ALGORITHM_REPLY,
-            "response_mode": "stop",
-            "current_step": "chat_completed",
-        }
-
-    reply = reply_casual_message(state.raw_question, state.memory_text)
-    if state.has_pending_algorithm:
-        reply = f"{reply}{PENDING_ALGORITHM_CHAT_NOTE}"
-
+    llm = get_llm_service()
+    chat_messages = _build_messages_for_chat(state)
+    raw_llm = llm.llm
+    response = raw_llm.invoke(chat_messages)
+    reply = response.content if isinstance(response.content, str) else str(response.content)
+    state = {**state, "agent_trace": append_agent_trace(state, "chat")}
+    reply = prepend_agent_trace(reply, state)
     return {
+        "agent_trace": state["agent_trace"],
         "response_text": reply,
-        "response_mode": "chat",
-        "current_step": "chat_completed",
+        "messages": [AIMessage(content=reply)],
     }

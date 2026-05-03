@@ -157,7 +157,7 @@ class GraphState(TypedDict):
     orchestrator_route: OrchestratorRoute
     retry_count: int
     max_retry: int
-    mode: Literal["teaching", "contest", "interview"]
+    mode: Literal["teaching", "contest"]
     teaching_stage: TeachingStage
     awaiting_user_feedback: bool
     last_teaching_node: NotRequired[LastTeachingNode]

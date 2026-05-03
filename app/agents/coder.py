@@ -53,6 +53,7 @@ def run_coder(state: GraphState) -> dict:
     code_execution = state.get("code_execution")
     existing_code = state.get("code_result") or {}
     user_input = _get_latest_user_input(state)
+    mode = state.get("mode", "teaching")
 
     suggestions = []
     if verification and verification.get("improvement_suggestions"):
@@ -69,10 +70,18 @@ def run_coder(state: GraphState) -> dict:
         "rollback_target": (verification or {}).get("rollback_target", ""),
     }
 
-    target_language = _detect_target_language(user_input, existing_code.get("language", "C++"))
+    # 竞赛模式默认 C++，除非用户明确指定其他语言
+    current_language = existing_code.get("language", "C++")
+    target_language = _detect_target_language(user_input, current_language)
+    
+    # 如果是竞赛模式且没有检测到语言切换，确保使用 C++
+    if mode == "contest" and target_language == current_language and not existing_code:
+        target_language = "C++"
+    
     direct_code_request = bool(user_input) and any(token in user_input.lower() for token in ["代码", "code", "实现", "改成", "python", "java", "c++", "cpp", "go", "rust", "javascript", "typescript"])
 
     user_payload = (
+        f"输出模式：{mode}\n\n"
         f"用户当前请求：\n{user_input}\n\n"
         f"目标语言：{target_language}\n\n"
         f"题意分析：\n{json.dumps(analysis, ensure_ascii=False, indent=2) if analysis else '{}'}\n\n"

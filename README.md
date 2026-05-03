@@ -10,10 +10,14 @@
 - 算法策略规划：核心思路、选择理由、步骤、复杂度和边界情况
 - 伪代码生成
 - 多语言代码生成：默认 C++，也可根据用户请求生成 Python、Java、Go、JavaScript、TypeScript、Rust 等
+- **两种输出模式**：
+  - **教学模式（teaching）**：默认模式，口语化表述，生成标准输入输出的完整可执行代码，适合学习理解
+  - **竞赛模式（contest）**：专业严谨表述，生成 LeetCode/力扣标准类方法格式代码，适合竞赛刷题
 - code_runner 调用免费的 Wandbox 在线 API 对生成代码进行编译或语法检查，并尝试空输入运行
+- 竞赛模式下，由于 LeetCode 格式代码无法直接运行，跳过在线验证
 - verifier 结合在线编译运行检查结果审核代码与策略，并按需回退到 `planner` 或 `coder`，最多重试 `MAX_RETRY` 次
 - 当在线检查发现编译、语法、运行或超时错误时，verifier 会确定性回退到 coder，并把错误输出作为修复反馈
-- formatter 将结构化结果整理成面向教学的自然语言回复
+- formatter 将结构化结果整理成面向不同模式的自然语言回复
 - followup 节点结合当前教学阶段回答追问或重讲
 - 普通聊天与问候应答
 - 交互式 CLI 支持多轮对话和长文本输入
@@ -30,13 +34,13 @@
 - `app/config.py`：环境变量配置读取
 - `app/agents/`：各工作流节点实现
   - `orchestrator.py`：基于规则和打分识别新题、继续、停止、重讲、追问、直接要代码、完整题解和普通聊天
-  - `analyst.py`：题意分析
-  - `planner.py`：算法策略规划
-  - `pseudocode.py`：伪代码生成
-  - `coder.py`：代码生成与目标语言识别
+  - `analyst.py`：题意分析，根据模式调整表述风格
+  - `planner.py`：算法策略规划，根据模式调整表述风格
+  - `pseudocode.py`：伪代码生成，根据模式调整表述风格
+  - `coder.py`：代码生成与目标语言识别，竞赛模式生成 LeetCode 格式
   - `code_runner.py`：调用 Wandbox 在线 API 做编译、语法检查和空输入运行检查
   - `verifier.py`：结合代码执行结果审核并给出回退建议
-  - `formatter.py`：最终回复组织
+  - `formatter.py`：最终回复组织，根据模式选择展示不同风格的输出
   - `followup.py`：阶段内追问与重讲
   - `chat_agent.py`：普通聊天
 - `app/prompts/`：各 agent 的系统提示词
@@ -102,39 +106,147 @@ LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 
 ## 运行
 
-交互模式：
+### 交互模式（推荐）
 
 ```bash
 python -m app.main
 ```
 
-启动后会先打招呼，然后持续等待用户输入；输入 `exit` 结束对话。
+启动后会引导你选择输出模式：
+```
+你好，我是你的算法设计多智能体助手。
+我支持两种输出模式：
+  1. 教学模式 - 口语化表述，适合学习理解
+  2. 竞赛模式 - 专业严谨表述，生成 LeetCode 标准格式代码
+
+请选择你想使用的模式（输入 1 或 2，默认为教学模式）：
+```
+
+选择模式后，持续等待用户输入；输入 `exit` 结束对话。
 
 CLI 支持长文本输入：
-
 - `Enter`：提交当前输入
 - `Esc+Enter`：插入换行
 - 若终端支持，也可使用 `Shift+Enter` 插入换行
 
-单次提问模式：
+### 单次提问模式
 
 ```bash
 python -m app.main "给定 n 个物品，每个物品有重量和价值，背包容量为 W，求最大总价值，每个物品最多选一次。"
 ```
 
-指定输出模式：
+### 指定输出模式
 
 ```bash
+# 教学模式
 python -m app.main --mode teaching
+
+# 竞赛模式
 python -m app.main --mode contest
-python -m app.main --mode interview
+
+# 单次提问 + 竞赛模式
+python -m app.main --mode contest "两数之和问题"
 ```
 
-`--mode` 当前可选：
+## 输出模式详解
 
-- `teaching`：默认教学模式
-- `contest`：竞赛风格
-- `interview`：面试风格
+### 教学模式（teaching）
+
+**特点**：
+- 表述风格：口语化、亲切，像老师在面对面教学
+- 代码格式：标准输入输出的完整可执行代码
+- 引导语：鼓励互动，如"如果你愿意，我接下来可以继续陪你逐行解释代码"
+- 在线验证：通过 Wandbox 进行编译和运行检查
+
+**适用场景**：
+- 算法学习
+- 概念理解
+- 逐步推导
+- 需要详细解释
+
+**示例输出**：
+```
+我们先不急着写代码，先把题目本身拆开来看...
+
+好，那我们继续看策略。按照我现在的理解，我会用动态规划来做这道题...
+
+对应的 C++ 代码如下：
+```cpp
+#include <iostream>
+#include <vector>
+using namespace std;
+
+int main() {
+    int n, W;
+    cin >> n >> W;
+    // ...
+}
+```
+
+复杂度方面，时间复杂度是 O(nW)，空间复杂度是 O(nW)。
+
+在线检查方面，代码已经通过编译或语法检查，并完成了一次空输入运行。
+```
+
+### 竞赛模式（contest）
+
+**特点**：
+- 表述风格：专业严谨，简洁高效
+- 代码格式：LeetCode/力扣标准类方法格式
+  - C++: `class Solution { public: ... };`
+  - Python: `class Solution: def ...`
+  - Java: `class Solution { ... }`
+- 引导语：简洁专业，如"以上代码为 LeetCode/力扣标准格式，可直接提交"
+- 在线验证：跳过（LeetCode 格式无法直接运行）
+- 默认语言：C++（除非用户明确指定其他语言）
+
+**适用场景**：
+- LeetCode/力扣刷题
+- 算法竞赛准备
+- OJ 平台提交
+- 快速获取标准格式代码
+
+**示例输出**：
+```
+题目要求：在8×8棋盘上放置8个皇后，任意两个皇后不能互相攻击...
+
+算法选择：回溯法。核心思路：逐行放置皇后，每次检查列和对角线冲突...
+
+C++ 标准实现：
+```cpp
+class Solution {
+public:
+    int totalNQueens(int n) {
+        unordered_set<int> cols, diag1, diag2;
+        return backtrack(0, n, cols, diag1, diag2);
+    }
+    
+private:
+    int backtrack(int row, int n, unordered_set<int>& cols, 
+                  unordered_set<int>& diag1, unordered_set<int>& diag2) {
+        // ...
+    }
+};
+```
+
+复杂度分析：时间复杂度：O(N!)，空间复杂度：O(N)。
+
+✓ 代码格式符合 LeetCode 标准。
+
+以上代码为 LeetCode/力扣标准格式，可直接提交。
+```
+
+### 模式对比
+
+| 特性 | 教学模式 | 竞赛模式 |
+|------|----------|----------|
+| 表述风格 | 口语化、亲切 | 专业严谨 |
+| 代码格式 | 标准输入输出 | LeetCode 类方法 |
+| 在线验证 | ✓ Wandbox | ✗ 跳过 |
+| 默认语言 | C++ | C++ |
+| 引导语 | 互动式 | 简洁专业 |
+| 复杂度表述 | "复杂度方面，时间复杂度是..." | "复杂度分析：时间复杂度：..." |
+| 适用场景 | 学习理解 | 刷题提交 |
 
 ## 分阶段算法回答
 
@@ -200,6 +312,8 @@ coder -> code_runner -> verifier -> formatter -> END
 
 当代码生成完成后，`code_runner` 会调用免费的 Wandbox 在线 API，按目标语言尝试编译或语法检查，并在通过后执行一次空输入运行。检查结果会写入 `code_execution`，再交给 `verifier` 综合判断。
 
+**竞赛模式特殊处理**：由于 LeetCode 格式代码（类方法）无法直接在 Wandbox 上运行，竞赛模式下会跳过在线验证，直接标记为通过。
+
 如果 `code_execution` 显示编译失败、语法错误、运行失败或超时，`verifier` 会不依赖模型、直接生成失败审核结果，设置 `rollback_target=coder`，并把在线错误输出写入 `improvement_suggestions`。随后路由会回到 `coder`，coder 会带着已有代码、在线检查结果和 verifier 建议重新生成修复后的完整代码。
 
 verifier 未通过时会根据 `rollback_target` 回退：
@@ -225,6 +339,7 @@ verifier -> formatter
 - `code_result`：代码生成结果
 - `code_execution`：在线编译、语法检查和空输入运行结果
 - `verification`：审核结果
+- `mode`：当前输出模式（teaching/contest）
 - `teaching_stage`：当前教学阶段，可能是 `analysis`、`strategy`、`implementation`、`done`
 - `awaiting_user_feedback`：是否正在等待用户继续或追问
 - `response_mode`：当前回复模式，如 `analysis_only`、`strategy_only`、`implementation_only`、`code_only`、`followup`、`chat`

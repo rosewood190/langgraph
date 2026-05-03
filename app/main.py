@@ -20,6 +20,12 @@ except ImportError:  # pragma: no cover
 
 WELCOME_MESSAGE = (
     "你好，我是你的算法设计多智能体助手。\n"
+    "我支持两种输出模式：\n"
+    "  1. 教学模式 - 口语化表述，适合学习理解\n"
+    "  2. 竞赛模式 - 专业严谨表述，生成 LeetCode 标准格式代码\n\n"
+    "请选择你想使用的模式（输入 1 或 2，默认为教学模式）："
+)
+MODE_SELECTED_MESSAGE = (
     "我会像老师一样分阶段陪你做题：先拆题，再讲策略，最后再落到实现。\n"
     "每一步讲完我都会停下来等你反馈，你可以让我继续、重讲，或者直接切换到代码。输入 exit 可退出对话。"
 )
@@ -83,13 +89,28 @@ def _next_turn_state(user_text: str) -> dict:
     }
 
 
-def interactive_chat(mode: str) -> None:
+def interactive_chat(mode: str | None = None) -> None:
     graph = build_graph()
     session = build_multiline_session()
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     is_first_turn = True
 
+    # 如果没有指定模式，引导用户选择
+    if mode is None:
+        print(WELCOME_MESSAGE)
+        try:
+            mode_choice = input().strip()
+            if mode_choice == "2":
+                mode = "contest"
+                print("\n已选择竞赛模式。")
+            else:
+                mode = "teaching"
+                print("\n已选择教学模式。")
+        except (EOFError, KeyboardInterrupt):
+            print("\n已退出对话。")
+            return
+    
     langsmith_cfg = build_langsmith_config(
         run_name="algo_agent_graph",
         tags=["algo-agent", "langgraph", mode],
@@ -98,7 +119,7 @@ def interactive_chat(mode: str) -> None:
     if langsmith_cfg:
         config.update(langsmith_cfg)
 
-    print(WELCOME_MESSAGE)
+    print(MODE_SELECTED_MESSAGE)
     print(MULTILINE_HINT)
 
     while True:
@@ -133,24 +154,26 @@ def interactive_chat(mode: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-agent algorithm design system")
     parser.add_argument("question", nargs="?", type=str, help="Algorithm problem statement. If omitted, starts interactive chat.")
-    parser.add_argument("--mode", choices=["teaching", "contest", "interview"], default="teaching", help="Output mode")
+    parser.add_argument("--mode", choices=["teaching", "contest"], default=None, help="Output mode (if not specified, will prompt user to choose)")
     args = parser.parse_args()
 
     if args.question:
+        # 单次提问模式，如果没有指定 mode，默认使用 teaching
+        mode = args.mode or "teaching"
         graph = build_graph()
         thread_id = str(uuid.uuid4())
         config: dict = {"configurable": {"thread_id": thread_id}}
         langsmith_cfg = build_langsmith_config(
             run_name="algo_agent_graph",
-            tags=["algo-agent", "langgraph", args.mode],
-            metadata={"mode": args.mode},
+            tags=["algo-agent", "langgraph", mode],
+            metadata={"mode": mode},
         )
         if langsmith_cfg:
             config.update(langsmith_cfg)
 
         try:
             with progress_indicator("Agent 正在思考"):
-                result = graph.invoke(_initial_state(args.question, args.mode), config=config)
+                result = graph.invoke(_initial_state(args.question, mode), config=config)
             print(_extract_response_text(result))
         except StructuredOutputError as exc:
             print(f"请求处理失败：{exc}")

@@ -12,7 +12,10 @@ def run_pseudocode(state: GraphState) -> dict:
     llm = get_llm_service()
     analysis = state.get("analysis")
     strategy = state.get("strategy")
+    mode = state.get("mode", "teaching")
+    
     user_payload = (
+        f"输出模式：{mode}\n\n"
         f"题意分析：\n{json.dumps(analysis, ensure_ascii=False, indent=2) if analysis else '{}'}\n\n"
         f"算法策略：\n{json.dumps(strategy, ensure_ascii=False, indent=2) if strategy else '{}'}"
     )

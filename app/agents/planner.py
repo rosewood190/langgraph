@@ -13,8 +13,10 @@ def run_planner(state: GraphState) -> dict:
     analysis = state.get("analysis")
     problem_text = state.get("problem_text", "")
     response_mode = state.get("response_mode", "strategy_only")
+    mode = state.get("mode", "teaching")
     
     user_payload = (
+        f"输出模式：{mode}\n\n"
         f"题目原文：\n{problem_text}\n\n"
         f"题意分析：\n{json.dumps(analysis, ensure_ascii=False, indent=2) if analysis else '{}'}"
     )

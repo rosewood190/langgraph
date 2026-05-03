@@ -24,10 +24,13 @@ def run_analyst(state: GraphState) -> dict:
     llm = get_llm_service()
     problem_text = _get_problem_text(state)
     response_mode = state.get("response_mode", "analysis_only")
+    mode = state.get("mode", "teaching")
+    
+    user_payload = f"输出模式：{mode}\n\n题目：\n{problem_text}"
     
     analysis = llm.invoke_structured(
         ANALYST_PROMPT,
-        problem_text,
+        user_payload,
         ProblemAnalysis,
         agent_name="analyst",
     )

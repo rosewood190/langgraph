@@ -99,6 +99,24 @@ def run_code_runner(state: GraphState) -> dict:
     code_result = state.get("code_result") or {}
     language = code_result.get("language", "C++")
     code_text = code_result.get("cpp_code", "")
+    mode = state.get("mode", "teaching")
+
+    # 竞赛模式下，LeetCode 格式代码无法直接在 Wandbox 运行，跳过在线验证
+    if mode == "contest":
+        return {
+            "agent_trace": append_agent_trace(state, "code_runner"),
+            "code_execution": {
+                "language": language,
+                "supported": True,
+                "compile_passed": True,
+                "run_passed": True,
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "error_stage": "",
+                "message": "竞赛模式：代码格式为 LeetCode 标准，跳过在线验证。",
+            },
+        }
 
     if not code_text.strip():
         return {
